@@ -1,9 +1,4 @@
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public class Lock {
-    [DllImport("user32.dll")]
-    public static extern void LockWorkStation();
-}
-"@
-[Lock]::LockWorkStation()
+# Lock the current user's workstation session
+# Uses the native Windows command (preferred over P/Invoke for reliability)
+
+rundll32.exe user32.dll,LockWorkStation
