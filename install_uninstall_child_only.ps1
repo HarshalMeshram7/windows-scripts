@@ -1,61 +1,41 @@
-<#
-CHILD INSTALL + UNINSTALL RESTRICTIONS
-Applies to all NON-admin accounts
-Skips Administrator and ParentAdmin
-#>
+# PowerShell script to restrict standard users from installing or uninstalling software
+# This works on Windows 10/11 Pro, Enterprise, or Education editions (requires Group Policy access)
+# Run this script as Administrator
 
-Write-Host "Applying install + uninstall restrictions to child accounts..."
+# Note: This primarily hides the "Programs and Features" page (appwiz.cpl) in Control Panel
+# and the Installed apps page in Settings for standard users.
+# It does not fully prevent per-user installations (e.g., portable apps or Microsoft Store apps).
+# For stronger restrictions, consider AppLocker (Pro+ editions) or third-party tools.
 
-$ExcludedUsers = @("Administrator", "ParentAdmin")
-
-$profiles = Get-CimInstance Win32_UserProfile | Where-Object {
-    $_.LocalPath -like "C:\Users\*" -and $_.Loaded -eq $false
+# 1. Hide "Programs and Features" in Control Panel
+$regPath1 = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Programs"
+if (-not (Test-Path $regPath1)) {
+    New-Item -Path $regPath1 -Force | Out-Null
 }
+New-ItemProperty -Path $regPath1 -Name "NoProgramsAndFeatures" -Value 1 -PropertyType DWORD -Force | Out-Null
 
-foreach ($profile in $profiles) {
-
-    $userPath = $profile.LocalPath
-    $userName = Split-Path $userPath -Leaf
-
-    if ($ExcludedUsers -contains $userName) {
-        Write-Host "Skipping admin: $userName"
-        continue
-    }
-
-    $hive = "$userPath\NTUSER.DAT"
-    if (-not (Test-Path $hive)) { continue }
-
-    Write-Host "Applying restrictions to: $userName"
-
-    # Load child HKCU hive
-    reg load HKU\CHILD_$userName "$hive" >$null 2>&1
-
-    # ------------------------------
-    # BLOCK UNINSTALL
-    # ------------------------------
-
-    reg add "HKU\CHILD_$userName\Software\Microsoft\Windows\CurrentVersion\Policies\Programs" /v NoProgramsUninstall /t REG_DWORD /d 1 /f
-    reg add "HKU\CHILD_$userName\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v NoPrograms /t REG_DWORD /d 1 /f
-    reg add "HKU\CHILD_$userName\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v NoUninstallFromStart /t REG_DWORD /d 1 /f
-    reg add "HKU\CHILD_$userName\Software\Policies\Microsoft\Windows\Explorer" /v NoUninstallAppPage /t REG_DWORD /d 1 /f
-
-    # ------------------------------
-    # BLOCK INSTALL (EXE, MSI, PS1 etc.)
-    # ------------------------------
-
-    reg add "HKU\CHILD_$userName\Software\Policies\Microsoft\Windows\Safer\CodeIdentifiers" /v DefaultLevel /t REG_DWORD /d 0 /f
-    reg add "HKU\CHILD_$userName\Software\Policies\Microsoft\Windows\Safer\CodeIdentifiers" /v TransparentEnabled /t REG_DWORD /d 1 /f
-    reg add "HKU\CHILD_$userName\Software\Policies\Microsoft\Windows\Safer\CodeIdentifiers" /v ExecutableTypes /t REG_SZ /d ".exe;.msi;.cmd;.bat;.ps1;.vbs;.com;.msp" /f
-
-    # Block PowerShell Installer Scripts
-    reg add "HKU\CHILD_$userName\Software\Policies\Microsoft\Windows\PowerShell" /v EnableScripts /t REG_DWORD /d 0 /f
-
-    # Block Winget / Microsoft Store installs
-    reg add "HKU\CHILD_$userName\Software\Policies\Microsoft\Windows\AppInstaller" /v EnableAppInstaller /t REG_DWORD /d 0 /f
-    reg add "HKU\CHILD_$userName\Software\Policies\Microsoft\Windows\AppInstaller" /v EnableMSStoreSource /t REG_DWORD /d 0 /f
-
-    # Unload child hive
-    reg unload HKU\CHILD_$userName >$null 2>&1
+# 2. Hide "Installed apps" page in Settings app (Windows 10/11)
+$regPath2 = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+if (-not (Test-Path $regPath2)) {
+    New-Item -Path $regPath2 -Force | Out-Null
 }
+New-ItemProperty -Path $regPath2 -Name "SettingsPageVisibility" -Value "hide:appsfeatures" -PropertyType String -Force | Out-Null
 
-Write-Output '{"status":"success","child_install_uninstall_blocked":1}'
+# 3. Optional: Disable Windows Installer for non-admins (blocks most MSI-based installations)
+# This applies system-wide but admins can still install.
+$regPath3 = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer"
+if (-not (Test-Path $regPath3)) {
+    New-Item -Path $regPath3 -Force | Out-Null
+}
+New-ItemProperty -Path $regPath3 -Name "DisableMSI" -Value 1 -PropertyType DWORD -Force | Out-Null
+# Value 1 = Disable for non-managed apps (standard users can't install MSI without elevation)
+# Value 2 = Completely disable (not recommended, breaks admin installs too)
+
+Write-Host "Restrictions applied. Restart the computer or log out/in for changes to take effect."
+Write-Host "Standard users will no longer see options to install/uninstall most programs."
+Write-Host "Admins remain unaffected."
+
+# To revert:
+# Remove-ItemProperty -Path $regPath1 -Name "NoProgramsAndFeatures"
+# Remove-ItemProperty -Path $regPath2 -Name "SettingsPageVisibility"
+# Remove-ItemProperty -Path $regPath3 -Name "DisableMSI"

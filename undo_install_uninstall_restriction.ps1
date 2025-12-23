@@ -1,41 +1,29 @@
-<#
-UNDO install/uninstall restrictions for child accounts
-Skips Administrator and ParentAdmin
-#>
+# PowerShell script to REVERT the restrictions applied by the previous script
+# This removes the registry keys that blocked install/uninstall functionality for standard users
+# Run this script as Administrator
 
-Write-Host "Removing restrictions from child accounts..."
-
-$ExcludedUsers = @("Administrator", "ParentAdmin")
-
-$profiles = Get-CimInstance Win32_UserProfile | Where-Object {
-    $_.LocalPath -like "C:\Users\*" -and $_.Loaded -eq $false
+# 1. Remove the "NoProgramsAndFeatures" restriction (unhide Programs and Features in Control Panel)
+$regPath1 = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Programs"
+if (Test-Path $regPath1) {
+    Remove-ItemProperty -Path $regPath1 -Name "NoProgramsAndFeatures" -ErrorAction SilentlyContinue
 }
 
-foreach ($profile in $profiles) {
-
-    $userPath = $profile.LocalPath
-    $userName = Split-Path $userPath -Leaf
-
-    if ($ExcludedUsers -contains $userName) {
-        Write-Host "Skipping admin: $userName"
-        continue
-    }
-
-    $hive = "$userPath\NTUSER.DAT"
-    if (-not (Test-Path $hive)) { continue }
-
-    Write-Host "Restoring permissions for: $userName"
-
-    reg load HKU\CHILD_$userName "$hive" >$null 2>&1
-
-    reg delete "HKU\CHILD_$userName\Software\Microsoft\Windows\CurrentVersion\Policies\Programs" /f
-    reg delete "HKU\CHILD_$userName\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" /f
-    reg delete "HKU\CHILD_$userName\Software\Policies\Microsoft\Windows\Explorer" /f
-    reg delete "HKU\CHILD_$userName\Software\Policies\Microsoft\Windows\Safer" /f
-    reg delete "HKU\CHILD_$userName\Software\Policies\Microsoft\Windows\PowerShell" /f
-    reg delete "HKU\CHILD_$userName\Software\Policies\Microsoft\Windows\AppInstaller" /f
-
-    reg unload HKU\CHILD_$userName >$null 2>&1
+# 2. Remove the "SettingsPageVisibility" restriction (unhide Installed apps in Settings)
+$regPath2 = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+if (Test-Path $regPath2) {
+    Remove-ItemProperty -Path $regPath2 -Name "SettingsPageVisibility" -ErrorAction SilentlyContinue
 }
 
-Write-Output '{"status":"success","child_install_uninstall_restored":1}'
+# 3. Remove the "DisableMSI" restriction (re-enable MSI installations for standard users)
+$regPath3 = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer"
+if (Test-Path $regPath3) {
+    Remove-ItemProperty -Path $regPath3 -Name "DisableMSI" -ErrorAction SilentlyContinue
+}
+
+# Optional: Clean up empty parent keys (harmless if they contain other values)
+# Remove-Item -Path $regPath1 -Recurse -ErrorAction SilentlyContinue
+# Remove-Item -Path $regPath3 -Recurse -ErrorAction SilentlyContinue
+
+Write-Host "All restrictions have been removed."
+Write-Host "Standard users can now access install/uninstall options again."
+Write-Host "Restart the computer or log out/in for changes to take full effect."

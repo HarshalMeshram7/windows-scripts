@@ -1,10 +1,9 @@
-<#
-    REMOTE LOCK SCRIPT
-    - Immediately locks the device
-    - Works for any user type (MSA / Local)
-#>
-
-# Lock workstation
-rundll32.exe user32.dll,LockWorkStation
-
-Write-Output '{"status":"locked"}'
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class Lock {
+    [DllImport("user32.dll")]
+    public static extern void LockWorkStation();
+}
+"@
+[Lock]::LockWorkStation()

@@ -1,27 +1,30 @@
-# Variables
-$username = "Child"
-$password = "Child@123"
+# ---------------------------------------------
+# Create a standard user "Child" with predefined password and sign out current user
+# ---------------------------------------------
 
-# Convert password to secure string
-$securePassword = ConvertTo-SecureString $password -AsPlainText -Force
-
-# Check if user already exists
-if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
-    Write-Host "User '$username' already exists."
-} else {
-    # Create standard local user
-    New-LocalUser `
-        -Name $username `
-        -Password $securePassword `
-        -FullName "Child User" `
-        -Description "Standard child account"
-
-    Write-Host "User '$username' created successfully."
+# Run as Administrator check
+If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Error "Please run PowerShell as Administrator."
+    exit
 }
 
-# Ensure user is NOT an administrator (standard user)
-Remove-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+# Set username and password for new user
+$Username = "Child"
+$PlainPassword = "Child@123"
+
+# Convert plain password to secure string
+$Password = ConvertTo-SecureString $PlainPassword -AsPlainText -Force
+
+# Check if user already exists
+if (Get-LocalUser -Name $Username -ErrorAction SilentlyContinue) {
+    Write-Warning "User '$Username' already exists."
+} else {
+    # Create new standard user
+    New-LocalUser -Name $Username -Password $Password -FullName "Child Account" -Description "Standard child account"
+    Add-LocalGroupMember -Group "Users" -Member $Username
+    Write-Output "User '$Username' created as standard user with password '$PlainPassword'."
+}
 
 # Sign out current user
-Write-Host "Signing out current user..."
-shutdown /l
+Write-Output "Signing out current user..."
+shutdown.exe /l
