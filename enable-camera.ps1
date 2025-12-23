@@ -1,30 +1,18 @@
-# Get the local Administrators group members
-$AdminSIDs = Get-LocalGroupMember -Group "Administrators" |
-    Where-Object { $_.ObjectClass -eq "User" } |
-    ForEach-Object { $_.SID.Value }
+# Requires running as Administrator
 
-# Get all enabled local users
-$Users = Get-LocalUser | Where-Object { $_.Enabled -eq $true }
+# Find all disabled camera devices
+$cameras = Get-PnpDevice -Class Camera, Image | Where-Object { $_.Status -eq 'Error' -or $_.Status -eq 'Disabled' }
 
-foreach ($User in $Users) {
+if ($cameras.Count -eq 0) {
+    Write-Host "No disabled camera devices found." -ForegroundColor Yellow
+    Write-Host "All cameras appear to be already enabled." -ForegroundColor Cyan
+} else {
+    Write-Host "Found $($cameras.Count) disabled camera device(s):" -ForegroundColor Cyan
+    $cameras | Select-Object FriendlyName, InstanceId, Status | Format-Table
 
-    # Skip administrators
-    if ($AdminSIDs -contains $User.SID.Value) {
-        Write-Output "Skipping administrator user: $($User.Name)"
-        continue
-    }
+    # Enable them (suppress confirmation prompt)
+    $cameras | Enable-PnpDevice -Confirm:$false
 
-    # Webcam privacy registry path
-    $RegPath = "Registry::HKEY_USERS\$($User.SID.Value)\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam"
-
-    # Only change if the key exists
-    if (Test-Path $RegPath) {
-        Set-ItemProperty -Path $RegPath -Name "Value" -Value "Allow"
-        Write-Output "Camera ENABLED for standard user: $($User.Name)"
-    }
-    else {
-        Write-Output "No camera restriction found for user: $($User.Name)"
-    }
+    Write-Host "Camera device(s) have been successfully re-enabled." -ForegroundColor Green
+    Write-Host "Note: Some applications may need to be restarted to detect the camera." -ForegroundColor Yellow
 }
-
-Write-Output "Camera access has been restored for all standard users."
