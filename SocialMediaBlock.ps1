@@ -1,155 +1,134 @@
-# BlockSocialMedia.ps1
-
 param(
     [Parameter(Mandatory = $true)]
-    [Array]$socialMediaUrls
+    [string[]]$socialMediaUrls
 )
 
-# Path to the hosts file
+# Requires admin
+if (-not ([Security.Principal.WindowsPrincipal] `
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Error "Run this script as Administrator."
+    exit 1
+}
+
 $hostsFilePath = "C:\Windows\System32\drivers\etc\hosts"
 
-# Function to get the list of currently blocked URLs in the hosts file
-function Get-BlockedUrlsFromHostsFile {
-    $blockedUrls = @()
-    if (Test-Path $hostsFilePath) {
-        $lines = Get-Content $hostsFilePath
-        foreach ($line in $lines) {
-            if ($line -match "127.0.0.1\s+(.+)") {
-                $blockedUrls += $matches[1]
-            }
-        }
-    } else {
-        Write-Host "Hosts file not found!"
-    }
-    return $blockedUrls
-}
+# ------------------ HELPERS ------------------
 
-# Function to get the list of currently blocked URLs in the Windows Firewall
-function Get-BlockedUrlsFromFirewall {
-    $blockedUrls = @()
-    $firewallRules = Get-NetFirewallRule | Where-Object { $_.DisplayName -like "Block*" }
-    foreach ($rule in $firewallRules) {
-        $remoteAddress = $rule | Get-NetFirewallAddressFilter | Select-Object -ExpandProperty RemoteAddress
-        if ($remoteAddress) {
-            $blockedUrls += $remoteAddress
-        }
-    }
-    return $blockedUrls
-}
-
-# Function to resolve a URL to its IP address
 function Resolve-UrlToIp {
-    param (
-        [string]$url
-    )
+    param ([string]$url)
     try {
-        $ip = [System.Net.Dns]::GetHostAddresses($url)[0].ToString()
-        return $ip
+        return ([System.Net.Dns]::GetHostAddresses($url) |
+            Where-Object { $_.AddressFamily -eq 'InterNetwork' } |
+            Select-Object -First 1).ToString()
     } catch {
-        Write-Host "Error resolving IP for $url"
         return $null
     }
 }
 
-# Function to block URLs in the hosts file
+function Get-BlockedUrlsFromHostsFile {
+    if (-not (Test-Path $hostsFilePath)) { return @() }
+
+    Get-Content $hostsFilePath | ForEach-Object {
+        if ($_ -match '^\s*127\.0\.0\.1\s+([a-zA-Z0-9\.\-]+)\s*$') {
+            $matches[1]
+        }
+    }
+}
+
+function Get-BlockedUrlsFromFirewall {
+    Get-NetFirewallRule |
+        Where-Object { $_.DisplayName -like "Block *" } |
+        ForEach-Object {
+            $_.DisplayName -replace '^Block\s+', ''
+        }
+}
+
+# ------------------ HOSTS FILE ------------------
+
 function Block-UrlsInHostsFile {
-    param (
-        [Array]$urls
-    )
-    if (-not (Test-Path $hostsFilePath)) {
-        Write-Host "Hosts file not found."
-        return
-    }
-    
+    param ([string[]]$urls)
+
+    $existing = Get-Content $hostsFilePath -ErrorAction Stop
+    $newLines = @($existing)
+
     foreach ($url in $urls) {
-        $url = $url.Trim()
-        $ip = Resolve-UrlToIp -url $url
-        if ($ip) {
-            $line = "127.0.0.1    $url"
-            $existingLines = Get-Content $hostsFilePath
-            if ($existingLines -notcontains $line) {
-                Add-Content -Path $hostsFilePath -Value $line
-                Write-Host "Blocked in hosts file: $url"
-            }
+        if ($existing -notmatch "^\s*127\.0\.0\.1\s+$([regex]::Escape($url))\s*$") {
+            $newLines += "127.0.0.1    $url"
+            Write-Host "Blocked in hosts file: $url"
         }
+    }
+
+    if ($newLines.Count -ne $existing.Count) {
+        Set-Content -Path $hostsFilePath -Value $newLines -Force
     }
 }
 
-# Function to unblock URLs from the hosts file
 function Unblock-UrlsInHostsFile {
-    param (
-        [Array]$urls
-    )
-    $existingLines = Get-Content $hostsFilePath
-    $newLines = $existingLines
+    param ([string[]]$urls)
+
+    $existing = Get-Content $hostsFilePath -ErrorAction Stop
+    $filtered = $existing
 
     foreach ($url in $urls) {
-        $url = $url.Trim()
-        $line = "127.0.0.1    $url"
-
-        # Only remove lines that contain actual social media URLs (avoid removing system lines like 127.0.0.1)
-        $newLines = $newLines | Where-Object { $_ -notmatch "127.0.0.1\s+$url" }
-
-        if ($existingLines.Count -ne $newLines.Count) {
-            $newLines | Set-Content $hostsFilePath
-            Write-Host "Unblocked from hosts file: $url"
+        $escaped = [regex]::Escape($url)
+        $filtered = $filtered | Where-Object {
+            $_ -notmatch "^\s*127\.0\.0\.1\s+$escaped\s*$"
         }
+    }
+
+    if ($filtered.Count -ne $existing.Count) {
+        Set-Content -Path $hostsFilePath -Value $filtered -Force
+        Write-Host "Hosts file updated."
     }
 }
 
-# Function to block URLs in the Windows Firewall
+# ------------------ FIREWALL ------------------
+
 function Block-UrlsUsingFirewall {
-    param (
-        [Array]$urls
-    )
+    param ([string[]]$urls)
+
     foreach ($url in $urls) {
-        $url = $url.Trim()
-        $ip = Resolve-UrlToIp -url $url
-        if ($ip) {
-            $existingRule = Get-NetFirewallRule | Where-Object { $_.DisplayName -eq "Block $url" }
-            if (-not $existingRule) {
-                New-NetFirewallRule -DisplayName "Block $url" -Direction Outbound -RemoteAddress $ip -Action Block
+        if (-not (Get-NetFirewallRule -DisplayName "Block $url" -ErrorAction SilentlyContinue)) {
+            $ip = Resolve-UrlToIp $url
+            if ($ip) {
+                New-NetFirewallRule `
+                    -DisplayName "Block $url" `
+                    -Direction Outbound `
+                    -RemoteAddress $ip `
+                    -Action Block `
+                    -Profile Any | Out-Null
+
                 Write-Host "Blocked in firewall: $url"
             }
         }
     }
 }
 
-# Function to unblock URLs from the Windows Firewall
 function Unblock-UrlsUsingFirewall {
-    param (
-        [Array]$urls
-    )
+    param ([string[]]$urls)
+
     foreach ($url in $urls) {
-        $url = $url.Trim()
-        $existingRule = Get-NetFirewallRule | Where-Object { $_.DisplayName -eq "Block $url" }
-        if ($existingRule) {
-            Remove-NetFirewallRule -DisplayName "Block $url"
-            Write-Host "Unblocked from firewall: $url"
-        }
+        Get-NetFirewallRule -DisplayName "Block $url" -ErrorAction SilentlyContinue |
+            Remove-NetFirewallRule
+        Write-Host "Unblocked from firewall: $url"
     }
 }
 
-# Get current blocked URLs
-$blockedFromHosts = Get-BlockedUrlsFromHostsFile
-$blockedFromFirewall = Get-BlockedUrlsFromFirewall
+# ------------------ MAIN LOGIC ------------------
 
-# Combine both blocked lists (hosts and firewall)
-$allBlockedUrls = $blockedFromHosts + $blockedFromFirewall
+$blockedHosts    = Get-BlockedUrlsFromHostsFile
+$blockedFirewall = Get-BlockedUrlsFromFirewall
+$allBlocked      = ($blockedHosts + $blockedFirewall) | Sort-Object -Unique
 
-# URLs that need to be blocked (present in the provided array)
-$urlsToBlock = $socialMediaUrls | Where-Object { $_ -notin $allBlockedUrls }
+$urlsToBlock   = $socialMediaUrls | Where-Object { $_ -notin $allBlocked }
+$urlsToUnblock = $allBlocked | Where-Object { $_ -notin $socialMediaUrls }
 
-# URLs that need to be unblocked (currently blocked but not in the provided array)
-$urlsToUnblock = $allBlockedUrls | Where-Object { $_ -notin $socialMediaUrls }
-
-# Block the URLs that are in the array but not already blocked
 if ($urlsToBlock.Count -gt 0) {
     Block-UrlsInHostsFile -urls $urlsToBlock
     Block-UrlsUsingFirewall -urls $urlsToBlock
 }
 
-# Unblock the URLs that are currently blocked but not in the array
 if ($urlsToUnblock.Count -gt 0) {
     Unblock-UrlsInHostsFile -urls $urlsToUnblock
     Unblock-UrlsUsingFirewall -urls $urlsToUnblock
