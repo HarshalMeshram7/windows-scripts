@@ -3,7 +3,8 @@ param(
     [string[]]$socialMediaUrls
 )
 
-# Requires admin
+# ------------------ ADMIN CHECK ------------------
+
 if (-not ([Security.Principal.WindowsPrincipal] `
     [Security.Principal.WindowsIdentity]::GetCurrent()
 ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -12,6 +13,27 @@ if (-not ([Security.Principal.WindowsPrincipal] `
 }
 
 $hostsFilePath = "C:\Windows\System32\drivers\etc\hosts"
+
+# ------------------ URL NORMALIZATION ------------------
+
+function Get-HostName {
+    param ([string]$inputUrl)
+
+    try {
+        if ($inputUrl -match '^https?://') {
+            return ([System.Uri]$inputUrl).Host.ToLower()
+        } else {
+            return ($inputUrl -replace '/.*$', '').ToLower()
+        }
+    } catch {
+        return $null
+    }
+}
+
+$socialMediaUrls = $socialMediaUrls |
+    ForEach-Object { Get-HostName $_ } |
+    Where-Object { $_ } |
+    Sort-Object -Unique
 
 # ------------------ HELPERS ------------------
 
@@ -31,16 +53,16 @@ function Get-BlockedUrlsFromHostsFile {
 
     Get-Content $hostsFilePath | ForEach-Object {
         if ($_ -match '^\s*127\.0\.0\.1\s+([a-zA-Z0-9\.\-]+)\s*$') {
-            $matches[1]
+            $matches[1].ToLower()
         }
     }
 }
 
 function Get-BlockedUrlsFromFirewall {
-    Get-NetFirewallRule |
+    Get-NetFirewallRule -ErrorAction SilentlyContinue |
         Where-Object { $_.DisplayName -like "Block *" } |
         ForEach-Object {
-            $_.DisplayName -replace '^Block\s+', ''
+            ($_.DisplayName -replace '^Block\s+', '').ToLower()
         }
 }
 
@@ -49,39 +71,50 @@ function Get-BlockedUrlsFromFirewall {
 function Block-UrlsInHostsFile {
     param ([string[]]$urls)
 
-    $existing = Get-Content $hostsFilePath -ErrorAction Stop
+    # Ensure hosts file is writable
+    attrib -r $hostsFilePath
+
+    $existing = Get-Content -Path $hostsFilePath -ErrorAction Stop
     $newLines = @($existing)
 
     foreach ($url in $urls) {
-        if ($existing -notmatch "^\s*127\.0\.0\.1\s+$([regex]::Escape($url))\s*$") {
+        $escaped = [regex]::Escape($url)
+        $pattern = "^\s*127\.0\.0\.1\s+$escaped\s*$"
+
+        if (-not ($existing -match $pattern)) {
             $newLines += "127.0.0.1    $url"
             Write-Host "Blocked in hosts file: $url"
         }
     }
 
     if ($newLines.Count -ne $existing.Count) {
-        Set-Content -Path $hostsFilePath -Value $newLines -Force
+        $content = ($newLines -join "`r`n")
+        Set-Content -Path $hostsFilePath -Value $content -Encoding ASCII -Force
     }
 }
+
 
 function Unblock-UrlsInHostsFile {
     param ([string[]]$urls)
 
-    $existing = Get-Content $hostsFilePath -ErrorAction Stop
+    attrib -r $hostsFilePath
+
+    $existing = Get-Content -Path $hostsFilePath -ErrorAction Stop
     $filtered = $existing
 
     foreach ($url in $urls) {
         $escaped = [regex]::Escape($url)
-        $filtered = $filtered | Where-Object {
-            $_ -notmatch "^\s*127\.0\.0\.1\s+$escaped\s*$"
-        }
+        $pattern = "^\s*127\.0\.0\.1\s+$escaped\s*$"
+        $filtered = $filtered | Where-Object { $_ -notmatch $pattern }
     }
 
     if ($filtered.Count -ne $existing.Count) {
-        Set-Content -Path $hostsFilePath -Value $filtered -Force
+        $content = ($filtered -join "`r`n")
+        Set-Content -Path $hostsFilePath -Value $content -Encoding ASCII -Force
         Write-Host "Hosts file updated."
     }
 }
+
 
 # ------------------ FIREWALL ------------------
 
@@ -99,7 +132,7 @@ function Block-UrlsUsingFirewall {
                     -Action Block `
                     -Profile Any | Out-Null
 
-                Write-Host "Blocked in firewall: $url"
+                Write-Host "Blocked in firewall: $url ($ip)"
             }
         }
     }
@@ -135,3 +168,8 @@ if ($urlsToUnblock.Count -gt 0) {
 }
 
 Write-Host "Processing completed."
+
+
+
+
+#.\SocialMediaBlock.ps1 -socialMediaUrls @("www.youtube.com", "https://www.instagram.com")
