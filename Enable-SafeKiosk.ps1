@@ -186,7 +186,8 @@ To exit Chrome kiosk mode: Press Alt+F4
 Emergency Exit Methods:
 1. Use 'Exit Kiosk Mode' shortcut on desktop
 2. Press Ctrl+Shift+E anywhere (3 times)
-3. Run C:\ProgramData\SafeKiosk\EmergencyExit.bat
+3. Run C:\ProgramData\SafeKiosk\EmergencyExit.ps1
+4. Run C:\ProgramData\SafeKiosk\ExitKiosk.bat
 
 Desktop shortcuts are in 'Allowed Applications' folder.
 
@@ -597,6 +598,7 @@ For help or to disable: Check C:\ProgramData\SafeKiosk\
             -ReferencedAssemblies "System.Windows.Forms"
         
         # Add to startup
+        $wshShell = New-Object -ComObject WScript.Shell
         $shortcut = $wshShell.CreateShortcut("$startupDir\EmergencyHotkey.lnk")
         $shortcut.TargetPath = "$kioskDir\EmergencyExitHotkey.exe"
         $shortcut.WindowStyle = 7  # Minimized
@@ -712,3 +714,26 @@ catch {
     Write-Host "Stack Trace: $($_.ScriptStackTrace)" -ForegroundColor DarkYellow
     exit 1
 }
+
+# Create cleanup script in kiosk directory
+$cleanupScript = @'
+# Cleanup script for Safe Kiosk Mode
+Write-Host "Cleaning up Safe Kiosk Mode..." -ForegroundColor Yellow
+
+# Remove scheduled tasks
+Get-ScheduledTask -TaskName "Kiosk*" -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false
+
+# Remove startup items
+Remove-Item "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\KioskStartup.bat" -ErrorAction SilentlyContinue
+Remove-Item "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\EmergencyHotkey.lnk" -ErrorAction SilentlyContinue
+
+# Remove auto-login
+$regPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+Remove-ItemProperty -Path $regPath -Name "AutoAdminLogon" -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path $regPath -Name "DefaultUsername" -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path $regPath -Name "DefaultPassword" -ErrorAction SilentlyContinue
+
+Write-Host "Cleanup complete. Please restart." -ForegroundColor Green
+'@
+
+$cleanupScript | Out-File -FilePath "$kioskDir\Cleanup.ps1" -Encoding UTF8

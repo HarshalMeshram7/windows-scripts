@@ -50,36 +50,4 @@ try {
     
     # 4. Remove kiosk user (optional)
     Write-Host "`nKiosk User Management:" -ForegroundColor Yellow
-    Write-Host "The kiosk user account can be kept or removed." -ForegroundColor White
-    $removeUser = Read-Host "Remove kiosk user account? (Y/N)"
-    
-    if ($removeUser -eq 'Y' -or $removeUser -eq 'y') {
-        try {
-            Remove-LocalUser -Name "SafeKiosk" -ErrorAction SilentlyContinue
-            Write-Host "  ✓ Kiosk user removed" -ForegroundColor Green
-        }
-        catch {
-            Write-Host "  Note: Could not remove user (may be logged in)" -ForegroundColor Yellow
-        }
-    }
-    
-    # 5. Clean desktop shortcuts for all users
-    Write-Host "Cleaning desktop shortcuts..." -ForegroundColor Yellow
-    $users = Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue
-    foreach ($user in $users) {
-        $desktopPath = "$($user.FullName)\Desktop"
-        if (Test-Path $desktopPath) {
-            $itemsToRemove = @(
-                "$desktopPath\Kiosk Control Panel.lnk",
-                "$desktopPath\Exit Kiosk Mode.lnk",
-                "$desktopPath\KIOSK_README.txt",
-                "$desktopPath\Kiosk Launcher.ps1"
-            )
-            
-            foreach ($item in $itemsToRemove) {
-                if (Test-Path $item) {
-                    Remove-Item $item -Force -ErrorAction SilentlyContinue
-                }
-            }
-            
-           
+    Write-Host "The kiosk user account can be kept
