@@ -429,11 +429,8 @@ Restart-Computer -Force
     $cleanupInstructions | Out-File -FilePath "$kioskDir\RestoreInstructions.ps1" -Encoding UTF8
     
     # Prompt for restart
-    $restart = Read-Host "`nConfiguration complete. Restart now to start kiosk mode? (Y/N)"
-    if ($restart -eq 'Y' -or $restart -eq 'y') {
-        Write-Log "Restarting computer..."
-        Restart-Computer -Force
-    }
+    Write-Log "Restarting computer..."
+    Restart-Computer -Force
     
 }
 catch {
