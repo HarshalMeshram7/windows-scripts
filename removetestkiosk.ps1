@@ -1,88 +1,56 @@
 # =====================================================
-# DISABLE / ROLLBACK KIOSK MODE (FULL CLEANUP)
+# DISABLE KIOSK MODE (LOCAL ONLY)
 # =====================================================
 
 $KioskUser = "KioskUser"
 
-Write-Output "Starting kiosk rollback..."
-
 # -----------------------------------------------------
-# 1. Remove Assigned Access CSP
+# 1. Remove Assigned Access
 # -----------------------------------------------------
 $CSPPath = "HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\AssignedAccess"
-
-if (Test-Path $CSPPath) {
-    Remove-ItemProperty `
-        -Path $CSPPath `
-        -Name "Configuration" `
-        -ErrorAction SilentlyContinue
-
-    Write-Output "Assigned Access CSP removed."
-}
+Remove-ItemProperty `
+    -Path $CSPPath `
+    -Name "Configuration" `
+    -ErrorAction SilentlyContinue
 
 # -----------------------------------------------------
-# 2. Remove IFEO blocks (restore CMD/PS/TaskMgr/etc)
+# 2. Remove IFEO blocks
 # -----------------------------------------------------
-$BlockedApps = @(
-    "powershell.exe",
-    "cmd.exe",
-    "regedit.exe",
-    "taskmgr.exe",
-    "control.exe",
-    "mmc.exe"
-)
+$IFEOBase = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
 
-foreach ($app in $BlockedApps) {
-    $ifeoPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$app"
-    if (Test-Path $ifeoPath) {
-        Remove-Item -Path $ifeoPath -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-
-Write-Output "Blocked system tools restored."
+Get-ChildItem $IFEOBase -ErrorAction SilentlyContinue |
+Where-Object {
+    $_.PSChildName -in @(
+        "powershell.exe",
+        "cmd.exe",
+        "taskmgr.exe",
+        "regedit.exe",
+        "control.exe",
+        "mmc.exe"
+    )
+} | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
 # -----------------------------------------------------
-# 3. Log off kiosk user if logged in
+# 3. Log off kiosk user
 # -----------------------------------------------------
 try {
-    $sessions = (quser 2>$null) -match $KioskUser
-    if ($sessions) {
-        $sessions | ForEach-Object {
-            $sessionId = ($_ -split '\s+')[2]
-            logoff $sessionId /f
-        }
-        Write-Output "Kiosk user logged off."
+    (quser | Where-Object { $_ -match $KioskUser }) |
+    ForEach-Object {
+        logoff (($_ -split '\s+')[2]) /f
     }
-}
-catch {}
+} catch {}
 
 # -----------------------------------------------------
-# 4. Remove kiosk user profile
+# 4. Remove kiosk profile
 # -----------------------------------------------------
-$profile = Get-CimInstance Win32_UserProfile |
-    Where-Object { $_.LocalPath -like "*\$KioskUser" }
-
-if ($profile) {
-    $profile | Remove-CimInstance
-    Write-Output "Kiosk user profile removed."
-}
+Get-CimInstance Win32_UserProfile |
+Where-Object { $_.LocalPath -like "*\$KioskUser" } |
+Remove-CimInstance -ErrorAction SilentlyContinue
 
 # -----------------------------------------------------
-# 5. Remove kiosk user account
+# 5. Remove kiosk user
 # -----------------------------------------------------
-if (Get-LocalUser -Name $KioskUser -ErrorAction SilentlyContinue) {
-    Remove-LocalUser -Name $KioskUser
-    Write-Output "Kiosk user account removed."
-}
+Remove-LocalUser -Name $KioskUser -ErrorAction SilentlyContinue
 
-# -----------------------------------------------------
-# 6. Clear Assigned Access cache (optional but recommended)
-# -----------------------------------------------------
-$CachePath = "HKLM:\SOFTWARE\Microsoft\AssignedAccess"
-if (Test-Path $CachePath) {
-    Remove-Item -Path $CachePath -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Output "Assigned Access cache cleared."
-}
-
-Write-Output "Kiosk mode fully disabled. REBOOT REQUIRED."
+Write-Output "Kiosk DISABLED. Reboot required."
 shutdown /r /t 0
