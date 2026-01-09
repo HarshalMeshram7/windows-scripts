@@ -169,4 +169,4 @@ Write-Host "Kiosk Mode has been disabled and Kiosk user removed." -ForegroundCol
 Write-Host "A system restart is recommended to complete the restoration." -ForegroundColor Yellow
 Write-Host "Log file: $LogFile" -ForegroundColor Gray
 
-shutdown /r /t 0
+# shutdown /r /t 0
