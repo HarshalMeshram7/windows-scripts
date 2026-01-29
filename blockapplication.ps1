@@ -1,71 +1,93 @@
 <#
 .SYNOPSIS
-  Applies local MDM-style application restrictions.
+  Hybrid application blocking policy (Execution + Network)
 .DESCRIPTION
-  - Blocks classic EXE apps using IFEO
-  - Removes Store apps for all users
-  - Disables Microsoft Store & App Installer
-  - Safe to run multiple times
+  - Automatically blocks apps based on type
+  - Offline apps → IFEO execution block
+  - Online apps → Firewall network block
+  - Safe for Windows Pro
 .NOTES
-  Must be executed as SYSTEM or Administrator
+  Must run as SYSTEM or Administrator
 #>
 
+Write-Output "Applying Hybrid Application Policy..."
+
 # =========================
-# CONFIGURATION
+# INPUT (APP NAMES)
 # =========================
-$ExeBlockList = @(
-    "chrome.exe"
+$AppsToBlock = @(
+    "chrome",
+    "notepad",
+    "adobe reader"
 )
 
-$StoreAppsToRemove = @(
-    "MSTeams",
-    "Microsoft.WindowsStore"
-)
+# =========================
+# CLASSIFICATION TABLE
+# =========================
 
-$DisableStore = $true
-$DisableAppInstaller = $true
+# Known ONLINE apps (network-dependent)
+$OnlineApps = @{
+    "chrome" = @(
+        "C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+    )
+    "edge" = @(
+        "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+    )
+    "teams" = @(
+        "C:\Program Files\Microsoft\Teams\current\ms-teams.exe"
+    )
+    "adobe reader" = @(
+        "C:\Program Files\Adobe\Acrobat DC\Acrobat\Acrobat.exe",
+        "C:\Program Files (x86)\Adobe\Acrobat Reader DC\Reader\AcroRd32.exe"
+    )
+}
+
+# Known OFFLINE / SYSTEM apps
+$OfflineExecutables = @{
+    "notepad" = @("notepad.exe")
+}
 
 # =========================
 # FUNCTIONS
 # =========================
 
-function Block-ExeIFEO {
+function Block-ExecutionIFEO {
     param ([string[]]$ExeNames)
 
     foreach ($exe in $ExeNames) {
-        $key = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$exe"
-
-        if (-not (Test-Path $key)) {
+        foreach ($base in @(
+            "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+        )) {
+            $key = "$base\$exe"
             New-Item -Path $key -Force | Out-Null
+            Set-ItemProperty -Path $key -Name Debugger `
+                -Value "C:\Windows\System32\blocked.exe" -Type String
+            Write-Output "Execution blocked: $exe"
         }
-
-        New-ItemProperty `
-            -Path $key `
-            -Name "Debugger" `
-            -Value "C:\Windows\System32\blocked.exe" `
-            -PropertyType String `
-            -Force | Out-Null
     }
 }
 
-function Remove-StoreApps {
-    param ([string[]]$Packages)
+function Block-NetworkFirewall {
+    param ([string[]]$ExePaths)
 
-    foreach ($pkg in $Packages) {
-        Get-AppxPackage -Name $pkg -AllUsers |
-            Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
-    }
-}
+    foreach ($path in $ExePaths) {
+        if (-not (Test-Path $path)) { continue }
 
-function Disable-StoreAccess {
-    if ($DisableStore) {
-        reg add "HKLM\SOFTWARE\Policies\Microsoft\WindowsStore" `
-            /v RemoveWindowsStore /t REG_DWORD /d 1 /f | Out-Null
-    }
+        $name = "MDM Hybrid Block - $(Split-Path $path -Leaf)"
 
-    if ($DisableAppInstaller) {
-        reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\AppInstaller" `
-            /v EnableAppInstaller /t REG_DWORD /d 0 /f | Out-Null
+        Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue |
+            Remove-NetFirewallRule
+
+        New-NetFirewallRule `
+            -DisplayName $name `
+            -Direction Outbound `
+            -Program $path `
+            -Action Block `
+            -Profile Any
+
+        Write-Output "Network blocked: $path"
     }
 }
 
@@ -73,10 +95,28 @@ function Disable-StoreAccess {
 # APPLY POLICY
 # =========================
 
-Write-Output "Applying MDM policy..."
+foreach ($app in $AppsToBlock) {
 
-Block-ExeIFEO -ExeNames $ExeBlockList
-Remove-StoreApps -Packages $StoreAppsToRemove
-Disable-StoreAccess
+    $appKey = $app.ToLower()
 
-Write-Output "MDM policy applied successfully."
+    # ONLINE APP → FIREWALL BLOCK
+    if ($OnlineApps.ContainsKey($appKey)) {
+        Block-NetworkFirewall -ExePaths $OnlineApps[$appKey]
+        continue
+    }
+
+    # OFFLINE APP → EXECUTION BLOCK
+    if ($OfflineExecutables.ContainsKey($appKey)) {
+        Block-ExecutionIFEO -ExeNames $OfflineExecutables[$appKey]
+        continue
+    }
+
+    # UNKNOWN APP → SAFE DEFAULT (EXECUTION BLOCK)
+    Write-Output "Unknown app '$app' → defaulting to execution block"
+    Block-ExecutionIFEO -ExeNames @("$app.exe")
+}
+
+Write-Output "Hybrid policy applied successfully."
+Write-Output "Reboot required for execution blocks."
+
+shutdown /r /t 5

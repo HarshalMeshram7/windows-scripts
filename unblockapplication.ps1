@@ -1,29 +1,26 @@
-Write-Output "=== FIXING CHROME EXECUTION ==="
+Write-Output "Reverting Hybrid Application Policy..."
 
-$chromeIfeo = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\chrome.exe"
+# Remove IFEO blocks
+$ifeoRoots = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+)
 
-if (Test-Path $chromeIfeo) {
-    Remove-Item -Path $chromeIfeo -Recurse -Force
-    Write-Output "Removed IFEO key for chrome.exe"
-} else {
-    Write-Output "No IFEO key found for chrome.exe"
+foreach ($root in $ifeoRoots) {
+    Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            $dbg = Get-ItemProperty $_.PsPath -Name Debugger -ErrorAction SilentlyContinue
+            if ($dbg.Debugger -like "*blocked.exe*") {
+                Remove-Item $_.PsPath -Recurse -Force
+                Write-Output "Removed execution block: $($_.PSChildName)"
+            }
+        } catch {}
+    }
 }
 
-# Also check WOW6432Node (safety)
-$chromeIfeoWow = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\chrome.exe"
+# Remove firewall rules
+Get-NetFirewallRule -DisplayName "MDM Hybrid Block*" -ErrorAction SilentlyContinue |
+    Remove-NetFirewallRule
 
-if (Test-Path $chromeIfeoWow) {
-    Remove-Item -Path $chromeIfeoWow -Recurse -Force
-    Write-Output "Removed IFEO key for chrome.exe (WOW6432Node)"
-}
-
-# Flush Explorer & shell cache
-Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
-Start-Process explorer.exe
-
-Write-Output "=== CHROME FIX APPLIED ==="
-Write-Output "IMPORTANT: REBOOT REQUIRED"
-
-
+Write-Output "Hybrid policy reverted."
 shutdown /r /t 5
