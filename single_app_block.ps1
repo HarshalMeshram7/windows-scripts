@@ -1,7 +1,11 @@
-# ==========================================
-# Block Multiple Applications using IFEO
-# Supports HKLM + HKCU + HKCR fallback
-# ==========================================
+# ============================================================
+# FINAL: Block Multiple Applications using IFEO
+# Sources:
+# 1. HKLM Uninstall
+# 2. HKCU Uninstall
+# 3. HKCR protocol handler
+# 4. MuiCache (LAST fallback)
+# ============================================================
 
 $AppsToBlock = @(
     "Google Chrome",
@@ -18,32 +22,55 @@ $UninstallKeys = @(
     "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
 )
 
+$MuiCachePath = "Registry::HKEY_CLASSES_ROOT\Local Settings\Software\Microsoft\Windows\Shell\MuiCache"
+
 foreach ($AppName in $AppsToBlock) {
 
     $exePath = $null
     $exeName = $null
 
-    # -------- STEP 1: Try Uninstall keys --------
-    $app = foreach ($key in $UninstallKeys) {
-        Get-ItemProperty $key -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName -like "*$AppName*" }
+    # -------------------------------
+    # 1️⃣ HKLM / HKCU Uninstall
+    # -------------------------------
+    foreach ($key in $UninstallKeys) {
+        $app = Get-ItemProperty $key -ErrorAction SilentlyContinue |
+               Where-Object { $_.DisplayName -like "*$AppName*" }
+
+        if ($app -and $app.DisplayIcon) {
+            $exePath = $app.DisplayIcon.Split(',')[0]
+            break
+        }
     }
 
-    if ($app -and $app.DisplayIcon) {
-        $exePath = $app.DisplayIcon.Split(',')[0]
-    }
-
-    # -------- STEP 2: HKCR fallback (Postman, Discord etc.) --------
+    # -------------------------------
+    # 2️⃣ HKCR protocol handler
+    # -------------------------------
     if (-not $exePath) {
-        $hkcrPath = "Registry::HKEY_CLASSES_ROOT\$($AppName.ToLower())\shell\open\command"
-        if (Test-Path $hkcrPath) {
-            $command = (Get-ItemProperty $hkcrPath).'(default)'
+        $protocolKey = "Registry::HKEY_CLASSES_ROOT\$($AppName.ToLower())\shell\open\command"
+        if (Test-Path $protocolKey) {
+            $command = (Get-ItemProperty $protocolKey).'(default)'
             if ($command) {
                 $exePath = ($command -replace '^"|".*$', '')
             }
         }
     }
 
+    # -------------------------------
+    # 3️⃣ MuiCache (last fallback)
+    # -------------------------------
+    if (-not $exePath -and (Test-Path $MuiCachePath)) {
+        $muiEntries = Get-ItemProperty $MuiCachePath
+        foreach ($prop in $muiEntries.PSObject.Properties) {
+            if ($prop.Name -match '\.exe' -and $prop.Name -match $AppName) {
+                $exePath = $prop.Name
+                break
+            }
+        }
+    }
+
+    # -------------------------------
+    # Validation
+    # -------------------------------
     if (-not $exePath) {
         Write-Host "SKIPPED: $AppName (EXE path not found)" -ForegroundColor Yellow
         continue
@@ -56,7 +83,9 @@ foreach ($AppName in $AppsToBlock) {
         continue
     }
 
-    # -------- STEP 3: IFEO block --------
+    # -------------------------------
+    # 4️⃣ IFEO Block
+    # -------------------------------
     $RegPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$exeName"
 
     New-Item -Path $RegPath -Force | Out-Null
@@ -70,4 +99,4 @@ foreach ($AppName in $AppsToBlock) {
     Write-Host "BLOCKED: $AppName ($exeName)" -ForegroundColor Red
 }
 
-Write-Host "---- Completed Blocking Apps ----" -ForegroundColor Cyan
+Write-Host "---- Completed Blocking Applications ----" -ForegroundColor Cyan
