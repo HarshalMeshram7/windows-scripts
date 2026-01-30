@@ -9,16 +9,16 @@ $ExeNamesToUnblock = @(
     "postman.exe"
 )
 
-foreach ($exe in $ExeNamesToUnblock) {
+foreach ($exeName in $ExeNamesToUnblock) {
 
-    $RegPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$exe"
+    $RegPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$exeName"
 
     if (Test-Path $RegPath) {
         Remove-Item -Path $RegPath -Recurse -Force
-        Write-Host "UNBLOCKED: $exe" -ForegroundColor Green
+        Write-Host "UNBLOCKED: $exeName" -ForegroundColor Green
     }
     else {
-        Write-Host "SKIPPED: $exe (not blocked)" -ForegroundColor Yellow
+        Write-Host "SKIPPED: $exeName (not blocked)" -ForegroundColor Yellow
     }
 }
 
