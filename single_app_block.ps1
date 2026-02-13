@@ -14,7 +14,7 @@ $AppsToBlock = @(
     "Postman"
 )
 
-$DebuggerPath = "C:\Windows\System32\systray.exe"
+$DebuggerPath = "cmd.exe"
 
 $UninstallKeys = @(
     "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
