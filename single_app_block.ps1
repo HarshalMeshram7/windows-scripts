@@ -1,16 +1,17 @@
-$AppNames = @(
-    "chrome",
-    "zoom",
-    "postman",
-    "notepad++"
+param (
+    [Parameter(Mandatory = $true)]
+    [string[]]$AppNames
 )
 
 $DebuggerPath = 'mshta.exe "javascript:alert(''This application has been blocked by your administrator.'');close();"'
 
+
 foreach ($app in $AppNames) {
 
-    # Automatically append .exe
-    $exeName = "$app.exe"
+    # Normalize name (remove .exe if user passed it)
+    $cleanName = $app -replace '\.exe$', ''
+
+    $exeName = "$cleanName.exe"
 
     $RegPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$exeName"
 
@@ -25,4 +26,8 @@ foreach ($app in $AppNames) {
     Write-Host "BLOCKED: $exeName" -ForegroundColor Red
 }
 
-Write-Host "---- Completed Blocking Applications ----"
+Write-Host "---- Completed Blocking Applications ----" -ForegroundColor Green
+
+
+#### run this file like
+## .\single_app_block.ps1 chrome postman zoom notepad++
