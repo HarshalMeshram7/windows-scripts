@@ -1,15 +1,18 @@
-# ==========================================
-# Unblock Multiple Applications using IFEO
-# ==========================================
-
-$ExeNamesToUnblock = @(
-    "chrome.exe",
-    "notepad++.exe",
-    "zoom.exe",
-    "postman.exe"
+param (
+    [Parameter(Mandatory = $true, ValueFromRemainingArguments = $true)]
+    [string[]]$Apps
 )
 
-foreach ($exeName in $ExeNamesToUnblock) {
+Write-Host "---- Starting App Unblock ----" -ForegroundColor Cyan
+
+foreach ($app in $Apps) {
+
+    # Auto-append .exe if not provided
+    if ($app -notmatch '\.exe$') {
+        $exeName = "$app.exe"
+    } else {
+        $exeName = $app
+    }
 
     $RegPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$exeName"
 
@@ -23,3 +26,6 @@ foreach ($exeName in $ExeNamesToUnblock) {
 }
 
 Write-Host "---- Completed Unblocking Apps ----" -ForegroundColor Cyan
+
+
+## .\revert-single-appblock.ps1 chrome postman discord

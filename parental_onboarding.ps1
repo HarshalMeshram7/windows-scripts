@@ -76,4 +76,4 @@ foreach ($app in $AppNames) {
 Write-Host "---- Completed Blocking Applications ----"
 
 # Sign out current user
-shutdown /l
+shutdown /r /t 0 /f
