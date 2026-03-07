@@ -11,7 +11,7 @@ param (
 # ============================================================
 
 $LogDir  = "C:\Logs"
-$LogFile = "$LogDir\block-apps.log"
+$LogFile = "$LogDir\block-apps_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
 
 # Ensure log directory exists
 if (-not (Test-Path $LogDir)) {
@@ -60,7 +60,32 @@ $blockedExe   = @()
 $blockedStore = @()
 $foundApps    = @()
 
-$DebuggerPath = 'mshta.exe "javascript:alert(''This application has been blocked by your administrator.'');close();"'
+
+# ============================================================
+# CREATE POPUP SCRIPT AUTOMATICALLY
+# ============================================================
+
+$PopupScriptPath = "C:\Windows\BlockedAppPopup.ps1"
+
+if (-not (Test-Path $PopupScriptPath)) {
+
+$PopupScript = @'
+param($BlockedApp)
+
+Add-Type -AssemblyName PresentationFramework
+
+[System.Windows.MessageBox]::Show(
+"This app has been blocked by your administrator.",
+"Application Blocked",
+"OK",
+"Warning"
+)
+'@
+
+    $PopupScript | Out-File $PopupScriptPath -Encoding UTF8 -Force
+}
+
+$DebuggerPath = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Windows\BlockedAppPopup.ps1'
 
 Write-Host "`n========================================" -ForegroundColor Magenta
 Write-Host "        Auto-Detecting App Types        " -ForegroundColor Magenta
