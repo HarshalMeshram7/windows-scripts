@@ -358,5 +358,27 @@ Write-Log "STEP 8: All steps completed. Restarting system in 5 seconds..."
 Write-Log "Script finished. Log saved at: $LogFile" "SUCCESS"
 Write-LogSeparator
 
+
+##########################################################################################
+#########################################################################################
+# Disable USB Mass Storage driver
+try {
+
+    # Block USB storage
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR" -Name "Start" -Value 4
+
+    Stop-Service -Name USBSTOR -Force -ErrorAction SilentlyContinue
+
+    Write-Log "USB storage devices BLOCKED successfully"
+
+    Write-Host "USB storage devices blocked successfully" -ForegroundColor Green
+}
+catch {
+
+    Write-Log "ERROR blocking USB storage: $_"
+
+    Write-Host "Error occurred. Check log file." -ForegroundColor Red
+}
+
 Start-Sleep -Seconds 5
 shutdown /r /t 0 /f

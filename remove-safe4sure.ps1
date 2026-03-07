@@ -310,6 +310,14 @@ if ($unblockedExe.Count -eq 0 -and $unblockedStore.Count -eq 0) {
 
 Write-Host "`n---- Completed Unblocking All Applications ----`n" -ForegroundColor Green
 
+
+#####################################################################################################
+#################################################################################################
+#Enable media storage
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR" -Name "Start" -Value 3
+
+Write-Host "USB storage devices are enabled again." -ForegroundColor Green
+
 # --------------------------------------------------------------
 # 8. DELETE LOCAL USER ACCOUNT 'Child'
 # --------------------------------------------------------------
