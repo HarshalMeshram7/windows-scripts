@@ -12,6 +12,44 @@ function Write-Step { param($msg) Write-Host "`n[*] $msg" -ForegroundColor Cyan 
 function Write-OK   { param($msg) Write-Host "    [OK] $msg" -ForegroundColor Green }
 function Write-Warn { param($msg) Write-Host "    [--] $msg" -ForegroundColor Yellow }
 
+
+# -------------------------------------------------
+# Restore Programs and Features (Control Panel)
+# -------------------------------------------------
+
+$programsPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Programs"
+
+if (Test-Path $programsPath) {
+
+    Remove-ItemProperty `
+    -Path $programsPath `
+    -Name "NoProgramsAndFeatures" `
+    -ErrorAction SilentlyContinue
+
+    Remove-ItemProperty `
+    -Path $programsPath `
+    -Name "NoAddRemovePrograms" `
+    -ErrorAction SilentlyContinue
+
+    Write-Log "Programs and Features restored"
+}
+
+# -------------------------------------------------
+# Restore Apps & Features page
+# -------------------------------------------------
+
+$explorerPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+
+if (Test-Path $explorerPath) {
+
+    Remove-ItemProperty `
+    -Path $explorerPath `
+    -Name "SettingsPageVisibility" `
+    -ErrorAction SilentlyContinue
+
+    Write-Log "Settings Apps & Features restored"
+}
+
 # --------------------------------------------------------------
 # 1. STOP AND DELETE SERVICES
 # --------------------------------------------------------------
