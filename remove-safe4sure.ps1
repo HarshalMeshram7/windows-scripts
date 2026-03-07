@@ -12,6 +12,37 @@ function Write-Step { param($msg) Write-Host "`n[*] $msg" -ForegroundColor Cyan 
 function Write-OK   { param($msg) Write-Host "    [OK] $msg" -ForegroundColor Green }
 function Write-Warn { param($msg) Write-Host "    [--] $msg" -ForegroundColor Yellow }
 
+##################################################################################################
+
+Write-Log "Reverting AppX uninstall restriction"
+
+$policy = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Appx"
+
+if (Test-Path $policy) {
+
+    Remove-ItemProperty `
+    -Path $policy `
+    -Name "AllowAllTrustedApps" `
+    -ErrorAction SilentlyContinue
+
+    Remove-ItemProperty `
+    -Path $policy `
+    -Name "BlockNonAdminUserInstall" `
+    -ErrorAction SilentlyContinue
+
+    Write-Log "AppX policies removed"
+
+    # Remove key if empty
+    if ((Get-Item $policy).Property.Count -eq 0) {
+        Remove-Item $policy -Force
+        Write-Log "AppX policy key removed"
+    }
+}
+
+gpupdate /force | Out-Null
+
+Write-Log "AppX uninstall restriction reverted"
+Write-Log "-----------------------------------"
 
 # -------------------------------------------------
 # Restore Programs and Features (Control Panel)
