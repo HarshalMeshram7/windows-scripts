@@ -10,28 +10,43 @@ Write-Host "-----------------------------------"
 
 # Enable Winget policy
 $policyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppInstaller"
-
 if (!(Test-Path $policyPath)) {
     New-Item -Path $policyPath -Force | Out-Null
 }
-
 Set-ItemProperty -Path $policyPath -Name EnableAppInstaller -Value 1 -Type DWord
 
 # ------------------------------------------------
-# Try Winget
+# STEP 1: Check if already installed (Winget)
 # ------------------------------------------------
 
 $winget = Get-Command winget -ErrorAction SilentlyContinue
+
+if ($winget) {
+    $installedOutput = winget list 2>&1 | Where-Object {
+        $_ -match $AppName
+    }
+
+    if ($installedOutput) {
+        Write-Host ""
+        Write-Host "'$AppName' is already installed. Skipping installation."
+        exit
+    }
+}
+
+# ------------------------------------------------
+# STEP 2: Search and install via Winget
+# ------------------------------------------------
 
 if ($winget) {
 
     Write-Host ""
     Write-Host "Searching Winget repository..."
 
-    $results = winget search $AppName | Where-Object {
+    $results = winget search $AppName 2>&1 | Where-Object {
         $_ -match '\w' -and
         $_ -notmatch "Name\s+Id\s+Version" -and
-        $_ -notmatch "^-+$"
+        $_ -notmatch "^-+$" -and
+        $_ -notmatch "No package found"
     }
 
     $first = $results | Select-Object -First 1
@@ -40,28 +55,32 @@ if ($winget) {
 
         $cols = $first -split '\s{2,}'
 
-        $pkgName = $cols[0]
-        $pkgId = $cols[1]
+        if ($cols.Count -ge 2 -and -not [string]::IsNullOrWhiteSpace($cols[1])) {
 
-        Write-Host "Found in Winget:"
-        Write-Host "Name: $pkgName"
-        Write-Host "ID: $pkgId"
+            $pkgName = $cols[0].Trim()
+            $pkgId   = $cols[1].Trim()
 
-        winget install --id $pkgId `
-            --silent `
-            --accept-package-agreements `
-            --accept-source-agreements `
-            --force
+            Write-Host "Found in Winget:"
+            Write-Host "Name: $pkgName"
+            Write-Host "ID:   $pkgId"
 
-        Write-Host "Installed via Winget"
-        exit
+            winget install --id $pkgId `
+                --exact `
+                --silent `
+                --accept-package-agreements `
+                --accept-source-agreements `
+                --force
+
+            Write-Host "Installed '$pkgName' via Winget."
+            exit
+        }
     }
 
-    Write-Host "Not found in Winget"
+    Write-Host "Not found in Winget. Trying Chocolatey..."
 }
 
 # ------------------------------------------------
-# Chocolatey fallback
+# STEP 3: Fallback - Search and install via Chocolatey
 # ------------------------------------------------
 
 $choco = Get-Command choco -ErrorAction SilentlyContinue
@@ -77,25 +96,40 @@ if (!$choco) {
         [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
 
     Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+    
+    $choco = Get-Command choco -ErrorAction SilentlyContinue
 }
 
-Write-Host ""
-Write-Host "Searching Chocolatey..."
-
-$pkg = choco search $AppName --limit-output | Select-Object -First 1
-
-if ($pkg) {
-
-    $pkgName = $pkg.Split('|')[0]
-
-    Write-Host "Found in Chocolatey: $pkgName"
-
-    choco install $pkgName -y
-
-    Write-Host "Installed via Chocolatey"
-}
-else {
+if ($choco) {
 
     Write-Host ""
-    Write-Host "Application not found in Winget or Chocolatey."
+    Write-Host "Searching Chocolatey..."
+
+    # Check if already installed via Chocolatey
+    $chocoInstalled = choco list --limit-output 2>&1 | Where-Object {
+        $_ -match "^$([regex]::Escape($AppName))\|"
+    }
+
+    if ($chocoInstalled) {
+        Write-Host ""
+        Write-Host "'$AppName' is already installed via Chocolatey. Skipping installation."
+        exit
+    }
+
+    $pkg = choco search $AppName --limit-output 2>&1 | Select-Object -First 1
+
+    if ($pkg) {
+
+        $pkgName = $pkg.Split('|')[0]
+
+        Write-Host "Found in Chocolatey: $pkgName"
+
+        choco install $pkgName -y
+
+        Write-Host "Installed '$pkgName' via Chocolatey."
+    }
+    else {
+        Write-Host ""
+        Write-Host "'$AppName' was not found in Winget or Chocolatey. Please install it manually."
+    }
 }
