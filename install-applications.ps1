@@ -107,6 +107,7 @@ $choco = Get-Command choco -ErrorAction SilentlyContinue
 if (!$choco) {
 
     Write-Log "Chocolatey not found. Installing..."
+    Write-Log "Chocolatey not found. Installing..."
 
     Set-ExecutionPolicy Bypass -Scope Process -Force
 
