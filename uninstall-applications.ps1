@@ -1,33 +1,23 @@
 # Run as Administrator
-# Usage: .\uninstall-applications.ps1 anydesk
+# Usage: .\uninstall-applications.ps1 slack
 
 param(
     [Parameter(Mandatory=$true)]
     [string]$AppName
 )
 
-# ============================================================
-# LOGGING SETUP
-# ============================================================
-
 $LogDir  = "C:\Logs"
-$LogFile = "$LogDir\uninstall_apps_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
+$LogFile = "$LogDir\uninstall_$AppName`_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 
 if (!(Test-Path $LogDir)) {
     New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 }
 
 function Write-Log {
-    param(
-        [string]$Message,
-        [string]$Level="INFO"
-    )
-
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $line = "[$timestamp] [$Level] $Message"
-
+    param([string]$Message, [string]$Level = "INFO")
+    $ts   = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $line = "[$ts] [$Level] $Message"
     Add-Content -Path $LogFile -Value $line
-
     switch ($Level) {
         "INFO"    { Write-Host $line -ForegroundColor Cyan }
         "SUCCESS" { Write-Host $line -ForegroundColor Green }
@@ -36,114 +26,206 @@ function Write-Log {
     }
 }
 
-Write-Log "Script started. Searching for: *$AppName*"
+Write-Log "=== START === Target: $AppName"
+Write-Log "PS $($PSVersionTable.PSVersion) | User: $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 
-# ============================================================
-# 1️⃣ STORE APP UNINSTALL
-# ============================================================
-
-$storeApps = Get-AppxPackage -AllUsers | Where-Object {
-    $_.Name -like "*$AppName*" -or $_.PackageFamilyName -like "*$AppName*"
+# ---------------------------------------------------------------
+# STEP 0: Kill matching processes
+# ---------------------------------------------------------------
+Write-Log "STEP 0: Killing processes..."
+$procs = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$AppName*" }
+foreach ($p in $procs) {
+    Write-Log "  Killing $($p.Name) PID=$($p.Id)" "WARN"
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    Write-Log "  Killed $($p.Name)" "SUCCESS"
 }
 
-if ($storeApps) {
-
-    foreach ($app in $storeApps) {
-
-        Write-Log "Found Store App: $($app.PackageFullName)"
-
-        try {
-
-            Remove-AppxPackage -Package $app.PackageFullName -AllUsers
-
-            Write-Log "Removed Store App: $($app.PackageFullName)" "SUCCESS"
-
-        }
-        catch {
-
-            Write-Log "Failed removing Store App: $($app.PackageFullName)" "ERROR"
-
-        }
+# ---------------------------------------------------------------
+# STEP 1: AppX / Store app
+# ---------------------------------------------------------------
+Write-Log "STEP 1: Store apps..."
+$store = Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$AppName*" }
+foreach ($a in $store) {
+    Write-Log "  Removing $($a.PackageFullName)"
+    try {
+        Remove-AppxPackage -Package $a.PackageFullName -AllUsers -ErrorAction Stop
+        Write-Log "  Removed $($a.PackageFullName)" "SUCCESS"
+    } catch {
+        Write-Log "  Failed: $_" "ERROR"
     }
+}
+if (-not $store) { Write-Log "  No Store apps found" "WARN" }
 
-    # remove provisioned packages
-    $prov = Get-AppxProvisionedPackage -Online | Where-Object {
-        $_.DisplayName -like "*$AppName*"
-    }
-
-    foreach ($p in $prov) {
-
-        Write-Log "Removing provisioned package: $($p.PackageName)"
-
-        Remove-AppxProvisionedPackage -Online -PackageName $p.PackageName
-
-        Write-Log "Provisioned package removed: $($p.PackageName)" "SUCCESS"
-    }
-
-    Write-Log "Store app uninstall completed"
-    exit
+# ---------------------------------------------------------------
+# STEP 2: Winget
+# ---------------------------------------------------------------
+Write-Log "STEP 2: Winget..."
+if (Get-Command winget -ErrorAction SilentlyContinue) {
+    $wOut = winget uninstall --name $AppName --silent --force --accept-source-agreements 2>&1
+    Write-Log "  Winget output: $wOut"
+    if ($LASTEXITCODE -eq 0) { Write-Log "  Winget succeeded" "SUCCESS" }
+    else { Write-Log "  Winget exit=$LASTEXITCODE" "WARN" }
+} else {
+    Write-Log "  Winget not available" "WARN"
 }
 
-Write-Log "No Store apps found. Checking EXE applications..." "WARN"
+# ---------------------------------------------------------------
+# STEP 3: Chocolatey
+# ---------------------------------------------------------------
+Write-Log "STEP 3: Chocolatey..."
+if (Get-Command choco -ErrorAction SilentlyContinue) {
+    $cOut = choco uninstall $AppName -y --force 2>&1
+    Write-Log "  Choco output: $cOut"
+    if ($LASTEXITCODE -eq 0) { Write-Log "  Choco succeeded" "SUCCESS" }
+    else { Write-Log "  Choco exit=$LASTEXITCODE" "WARN" }
+} else {
+    Write-Log "  Chocolatey not available" "WARN"
+}
 
-# ============================================================
-# 2️⃣ EXE APPLICATION UNINSTALL
-# ============================================================
+# ---------------------------------------------------------------
+# STEP 4: Registry EXE/MSI uninstall
+# Popup dismisser: pure PowerShell background job using
+# WScript.Shell SendKeys -- no C#, no Add-Type, no compilation
+# ---------------------------------------------------------------
+Write-Log "STEP 4: Registry uninstall..."
 
-$paths = @(
-"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-"HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
-"HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+function Start-PopupWatcher {
+    $job = Start-Job -ScriptBlock {
+        $shell = New-Object -ComObject WScript.Shell
+        $end   = (Get-Date).AddSeconds(120)
+        while ((Get-Date) -lt $end) {
+            $wins = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -ne "" }
+            foreach ($w in $wins) {
+                $t = $w.MainWindowTitle.ToLower()
+                $isDialog = ($t -like "*uninstall*") -or ($t -like "*confirm*") -or ($t -like "*warning*") -or ($t -like "*remove*")
+                if ($isDialog) {
+                    $null = $shell.AppActivate($w.Id)
+                    Start-Sleep -Milliseconds 150
+                    $shell.SendKeys("{ENTER}")
+                }
+            }
+            Start-Sleep -Milliseconds 400
+        }
+    }
+    return $job
+}
+
+$regPaths = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
 )
 
 $found = $false
-
-foreach ($path in $paths) {
-
-    $apps = Get-ItemProperty $path -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName -like "*$AppName*" }
-
-    foreach ($app in $apps) {
-
+foreach ($rp in $regPaths) {
+    $entries = Get-ItemProperty $rp -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*$AppName*" }
+    foreach ($entry in $entries) {
         $found = $true
+        Write-Log "  Found: $($entry.DisplayName)"
 
-        Write-Log "Found EXE application: $($app.DisplayName)"
+        $uStr = $entry.QuietUninstallString
+        if (-not $uStr) { $uStr = $entry.UninstallString }
+        if (-not $uStr) { Write-Log "  No uninstall string, skipping" "WARN"; continue }
 
-        $uninstall = $app.UninstallString
+        Write-Log "  Uninstall string: $uStr"
 
-        if ($uninstall -match "msiexec") {
-
-            $productCode = ($uninstall -replace ".*({.*})",'$1')
-
-            Write-Log "Running silent MSI uninstall"
-
-            Start-Process "msiexec.exe" `
-                -ArgumentList "/x $productCode /qn /norestart" `
-                -Wait -WindowStyle Hidden
-
+        if ($uStr -match "msiexec") {
+            # Extract MSI product code safely -- no inline regex with special chars
+            $null = $uStr -match '\{[A-F0-9\-]+\}'
+            $code = $Matches[0]
+            Write-Log "  MSI code: $code"
+            Start-Process "msiexec.exe" -ArgumentList "/x $code /qn /norestart" -Wait -WindowStyle Hidden
+            Write-Log "  MSI done: $($entry.DisplayName)" "SUCCESS"
+        } else {
+            if ($uStr -match '"') {
+                $exePath = ($uStr -split '"')[1]
+            } else {
+                $exePath = ($uStr -split ' ')[0]
+            }
+            Write-Log "  EXE: $exePath"
+            if (-not (Test-Path $exePath -ErrorAction SilentlyContinue)) {
+                Write-Log "  EXE not found: $exePath" "WARN"
+                continue
+            }
+            Write-Log "  Starting popup watcher..."
+            $wJob = Start-PopupWatcher
+            Start-Process -FilePath $exePath -ArgumentList "/S /silent /verysilent /quiet /norestart" -Wait -WindowStyle Normal
+            Stop-Job  -Job $wJob -ErrorAction SilentlyContinue
+            Remove-Job -Job $wJob -Force -ErrorAction SilentlyContinue
+            Write-Log "  EXE done: $($entry.DisplayName)" "SUCCESS"
         }
-        else {
+    }
+}
+if (-not $found) { Write-Log "  Not found in registry" "WARN" }
 
-            Write-Log "Running silent EXE uninstall"
-
-            $exe = ($uninstall -split '"')[1]
-
-            $silentArgs = "/S /silent /verysilent /quiet /norestart"
-
-            Start-Process `
-                -FilePath $exe `
-                -ArgumentList $silentArgs `
-                -Wait -WindowStyle Hidden
+# ---------------------------------------------------------------
+# STEP 5: Delete leftover folders
+# ---------------------------------------------------------------
+Write-Log "STEP 5: Leftover folders..."
+$roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData, $env:APPDATA, $env:LOCALAPPDATA)
+foreach ($root in $roots) {
+    if (-not $root) { continue }
+    if (-not (Test-Path $root)) { continue }
+    $dirs = Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$AppName*" }
+    foreach ($d in $dirs) {
+        Write-Log "  Removing $($d.FullName)" "WARN"
+        try {
+            & takeown /f "$($d.FullName)" /r /d y 2>&1 | Out-Null
+            & icacls "$($d.FullName)" /grant "$($env:USERNAME):F" /t /q 2>&1 | Out-Null
+            Remove-Item -Path $d.FullName -Recurse -Force -ErrorAction Stop
+            Write-Log "  Deleted $($d.FullName)" "SUCCESS"
+        } catch {
+            Write-Log "  Could not delete $($d.FullName): $_" "ERROR"
         }
-
-        Write-Log "Uninstalled: $($app.DisplayName)" "SUCCESS"
     }
 }
 
-if (-not $found) {
-
-    Write-Log "Application not found: $AppName" "WARN"
-
+# ---------------------------------------------------------------
+# STEP 6: Remove leftover registry keys
+# ---------------------------------------------------------------
+Write-Log "STEP 6: Leftover registry keys..."
+$regRoots = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+    "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+)
+foreach ($root in $regRoots) {
+    $keys = Get-ChildItem -Path $root -ErrorAction SilentlyContinue | Where-Object {
+        (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DisplayName -like "*$AppName*"
+    }
+    foreach ($k in $keys) {
+        Write-Log "  Removing key $($k.PSPath)" "WARN"
+        try {
+            Remove-Item -Path $k.PSPath -Recurse -Force -ErrorAction Stop
+            Write-Log "  Removed $($k.PSPath)" "SUCCESS"
+        } catch {
+            Write-Log "  Failed $($k.PSPath): $_" "ERROR"
+        }
+    }
 }
 
-Write-Log "Script completed"
+# ---------------------------------------------------------------
+# STEP 7: Remove leftover shortcuts
+# ---------------------------------------------------------------
+Write-Log "STEP 7: Leftover shortcuts..."
+$lnkRoots = @(
+    "$env:PUBLIC\Desktop",
+    "$env:USERPROFILE\Desktop",
+    "$env:APPDATA\Microsoft\Windows\Start Menu\Programs",
+    "C:\ProgramData\Microsoft\Windows\Start Menu\Programs"
+)
+foreach ($dir in $lnkRoots) {
+    if (-not (Test-Path $dir)) { continue }
+    $links = Get-ChildItem -Path $dir -Filter "*.lnk" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$AppName*" }
+    foreach ($lnk in $links) {
+        Write-Log "  Removing $($lnk.FullName)" "WARN"
+        try {
+            Remove-Item -Path $lnk.FullName -Force -ErrorAction Stop
+            Write-Log "  Removed $($lnk.FullName)" "SUCCESS"
+        } catch {
+            Write-Log "  Failed: $_" "ERROR"
+        }
+    }
+}
+
+Write-Log "=== DONE === Log: $LogFile" "SUCCESS"
